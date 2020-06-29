@@ -10,7 +10,7 @@
 #include "file.h"
 
 // 硬盘指针
-char* disk;
+Block* disk;
 // 硬盘空间
 void* disk_space = (void*)0;
 // 共享内存id
@@ -42,7 +42,7 @@ char* getDisk()
         fprintf(stderr, "Shmat failed\n");
         exit(EXIT_FAILURE);
     }
-    disk = (char*)disk_space;
+    disk = (Block*)disk_space;
     return disk;
 }
 
@@ -51,13 +51,13 @@ void initBootBlock()
     BootBlock* boot_block = (BootBlock*)disk;
     strcpy(boot_block->disk_name, "yangruichen's Disk");
     boot_block->disk_size = sizeof(Block) * BLOCK_NUM;
-    boot_block->fat_block = (Block*)(disk + sizeof(Block) * FAT_BLOCK);
-    boot_block->data_block = (Block*)(disk + sizeof(Block) * DATA_BLOCK);
+    boot_block->fat_block = disk + FAT_BLOCK;
+    boot_block->data_block = disk + DATA_BLOCK;
 }
 
 void initFat()
 {
-    fat = (char*)(disk + sizeof(Block) * FAT_BLOCK);
+    fat = (char*)(disk + FAT_BLOCK);
 
     for (int i = 0; i < FAT_BLOCK; i++) {
         fat[i] = USED; // Full sign
@@ -151,7 +151,7 @@ void initDisk()
     initBootBlock();
     initFat();
 
-    Fcb* root = (Fcb*)(disk + sizeof(Block) * DATA_BLOCK);
+    Fcb* root = (Fcb*)(disk + DATA_BLOCK);
     initDirFcb(root, DATA_BLOCK, DATA_BLOCK);
     current = 0;
     path[current] = root;
@@ -193,11 +193,7 @@ Fcb* searchFcb(char* name)
     char is_existed = 0;
     Fcb* p = path[current];
     for (int i = 0; i < (sizeof(Block) / sizeof(Fcb)); i++) {
-        if (
-            p->is_existed == 1
-            && strcmp(p->name, name) == 0
-            && p->is_directory == 1
-        ) {
+        if (p->is_existed == 1 && strcmp(p->name, name) == 0) {
             return p;
         }
         p++;
@@ -212,7 +208,7 @@ int doRmdir(char* name)
         return -1;
     }
     Fcb* p = searchFcb(name);
-    if (p) {
+    if (p && p->is_directory == 1) {
         // 释放fat标记
         for (int i = 0; i < ((p->size - 1) / sizeof(Block)) + 1; i++) {
             fat[p->block_number + i] = FREE;
@@ -240,6 +236,21 @@ int doRename(char* src, char* dst)
         return -1;
     }
     return 0;
+}
+
+int doOpen(char* name)
+{
+    // Fcb* p = searchFcb(name);
+    // if (p) {
+    //     if (p->is_directory != 0) {
+    //         printf("[doOpen] %s is not file\n", name);
+    //         return -1;
+    //     }
+    //     // 存在该文件，即读取文件内容
+    //     disk[p->block_number]
+    // } else {
+    //     // 不存在该文件，则创建文件
+    // }
 }
 
 void doLs()
