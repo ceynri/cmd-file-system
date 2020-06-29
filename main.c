@@ -24,7 +24,7 @@ Fcb* path[16];
 // 当前打开的目录深度
 short current;
 
-char* getDisk()
+Block* getDisk()
 {
     // 获取共享内存区
     shmid = shmget((key_t)1110, sizeof(Disk), 0666 | IPC_CREAT);
@@ -109,43 +109,6 @@ void initDirFcb(Fcb* fcb, short block_number, short parent_number)
     }
 }
 
-int getFreeBlock(int size)
-{
-    int count = 0;
-    for (int i = DATA_BLOCK; i < DATA_NUM; i++) {
-        if (fat[i] == FREE) {
-            count++;
-        } else {
-            count = 0;
-        }
-        if (count == size) {
-            for (int j = 0; j < size; j++) {
-                fat[i - j] = USED;
-            }
-            return i;
-        }
-    }
-    return -1;
-}
-
-void newFcb(Fcb* fcb, char* name, char is_dir, int size)
-{
-    // 目录名
-    strcpy(fcb->name, name);
-    fcb->is_directory = is_dir;
-    // 时间
-    setCurrentTime(&fcb->datetime);
-    // 文件
-    int block_num = getFreeBlock(((size - 1) / sizeof(Block)) + 1);
-    if (block_num == -1) {
-        printf("[newFcb] Disk has Fulled\n");
-        exit(EXIT_FAILURE);
-    }
-    fcb->block_number = block_num;
-    fcb->size = size;
-    fcb->is_existed = 1;
-}
-
 void initDisk()
 {
     initBootBlock();
@@ -173,48 +136,94 @@ void releaseDisk()
     }
 }
 
-void doMkdir(char* name)
+int getFreeBlock(int size)
 {
-    // 找一个空fcb
-    Fcb* p = path[current];
-    for (int i = 0; i < (sizeof(Block) / sizeof(Fcb)); i++) {
-        if (p->is_existed == 1) {
-            p++;
+    int count = 0;
+    for (int i = DATA_BLOCK; i < DATA_NUM; i++) {
+        if (fat[i] == FREE) {
+            count++;
         } else {
-            newFcb(p, name, 1, sizeof(Fcb) * 2);
-            path[current]->size += sizeof(Fcb);
-            break;
+            count = 0;
+        }
+        if (count == size) {
+            for (int j = 0; j < size; j++) {
+                fat[i - j] = USED;
+            }
+            return i;
         }
     }
+    return -1;
 }
 
 Fcb* searchFcb(char* name)
 {
     char is_existed = 0;
-    Fcb* p = path[current];
+    Fcb* fcb = path[current];
     for (int i = 0; i < (sizeof(Block) / sizeof(Fcb)); i++) {
-        if (p->is_existed == 1 && strcmp(p->name, name) == 0) {
-            return p;
+        if (fcb->is_existed == 1 && strcmp(fcb->name, name) == 0) {
+            return fcb;
         }
-        p++;
+        fcb++;
     }
     return NULL;
 }
 
+Fcb* getFreeFcb(Fcb* fcb)
+{
+    for (int i = 0; i < (sizeof(Block) / sizeof(Fcb)); i++) {
+        if (fcb->is_existed == 0) {
+            return fcb;
+        }
+        fcb++;
+    }
+    return NULL;
+}
+
+Fcb* newFcb(Fcb* fcb, char* name, char is_dir, int size)
+{
+    // 目录名
+    strcpy(fcb->name, name);
+    fcb->is_directory = is_dir;
+    // 时间
+    setCurrentTime(&fcb->datetime);
+    // 文件
+    int block_num = getFreeBlock(((size - 1) / sizeof(Block)) + 1);
+    if (block_num == -1) {
+        printf("[newFcb] Disk has Fulled\n");
+        exit(EXIT_FAILURE);
+    }
+    fcb->block_number = block_num;
+    fcb->size = 0;
+    fcb->is_existed = 1;
+    return fcb;
+}
+
+void doMkdir(char* name)
+{
+    Fcb* fcb = getFreeFcb(path[current]);
+    newFcb(fcb, name, 1, sizeof(Block));
+    fcb->size = sizeof(Fcb) * 2;
+    path[current]->size += sizeof(Fcb);
+    Fcb* new_dir = (Fcb*)(disk + fcb->block_number);
+    initDirFcb(new_dir, fcb->block_number, path[current]->block_number);
+}
+
+// TODO 多层级目录，需要递归删除
 int doRmdir(char* name)
 {
     if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) {
         printf("[doRmdir] You can't delete %s\n", name);
         return -1;
     }
-    Fcb* p = searchFcb(name);
-    if (p && p->is_directory == 1) {
+    Fcb* fcb = searchFcb(name);
+    if (fcb && fcb->is_directory == 1) {
         // 释放fat标记
-        for (int i = 0; i < ((p->size - 1) / sizeof(Block)) + 1; i++) {
-            fat[p->block_number + i] = FREE;
+        int i;
+        for (i = 0; i < ((fcb->size - 1) / sizeof(Block) + 1); i++) {
+            fat[fcb->block_number + i] = FREE;
         }
         // 删除索引记录
-        p->is_existed = 0;
+        fcb->is_existed = 0;
     } else {
         printf("[doRmdir] Not found %s\n", name);
         return -1;
@@ -228,9 +237,9 @@ int doRename(char* src, char* dst)
         printf("[doRename] You can't rename %s\n", src);
         return -1;
     }
-    Fcb* p = searchFcb(src);
-    if (p) {
-        strcpy(p->name, dst);
+    Fcb* fcb = searchFcb(src);
+    if (fcb) {
+        strcpy(fcb->name, dst);
     } else {
         printf("[doRename] Not found %s\n", src);
         return -1;
@@ -240,28 +249,37 @@ int doRename(char* src, char* dst)
 
 int doOpen(char* name)
 {
-    // Fcb* p = searchFcb(name);
-    // if (p) {
-    //     if (p->is_directory != 0) {
-    //         printf("[doOpen] %s is not file\n", name);
-    //         return -1;
-    //     }
-    //     // 存在该文件，即读取文件内容
-    //     disk[p->block_number]
-    // } else {
-    //     // 不存在该文件，则创建文件
-    // }
+    Fcb* fcb = searchFcb(name);
+    if (fcb) {
+        if (fcb->is_directory != 0) {
+            printf("[doOpen] %s is not file\n", name);
+            return -1;
+        }
+        // 存在该文件，即读取文件内容
+        char* p = (char*)(disk + fcb->block_number);
+        for (int i = 0; i < fcb->size; i++) {
+            printf("%c", *p);
+            p++;
+        }
+    } else {
+        // 不存在该文件，则创建文件
+        Fcb* fcb = getFreeFcb(path[current]);
+        newFcb(fcb, name, 0, sizeof(Block));
+        fcb->size = 0;
+        path[current]->size += sizeof(Fcb);
+    }
+    return 0;
 }
 
 void doLs()
 {
-    Fcb* p = path[current];
+    Fcb* fcb = path[current];
     int num = path[current]->size / sizeof(Fcb);
     for (int i = 0; i < (sizeof(Block) / sizeof(Fcb)); i++) {
-        if (p->is_existed) {
-            printf("%s\t", p->name);
+        if (fcb->is_existed) {
+            printf("%s\t", fcb->name);
         }
-        p++;
+        fcb++;
     }
     printf("\n");
 }
@@ -278,7 +296,11 @@ int main()
 
     doMkdir("123");
     doLs();
-    doRename("123", "345");
+    doRmdir("123");
+    doLs();
+    doOpen("345");
+    doLs();
+    doOpen("345");
     doLs();
 
     getchar();
