@@ -102,7 +102,7 @@ void initDirFcb(Fcb* fcb, short block_number, short parent_number)
     p->size = -1;
 
     // 初始化目录表
-    for (int i = 2; i < (int)(sizeof(Block) / sizeof(Fcb)); i++) {
+    for (int i = 2; i < (sizeof(Block) / sizeof(Fcb)); i++) {
         p++;
         strcpy(p->name, "");
         p->is_existed = 0;
@@ -136,7 +136,7 @@ void newFcb(Fcb* fcb, char* name, char is_dir, int size)
     // 时间
     setCurrentTime(&fcb->datetime);
     // 文件
-    int block_num = getFreeBlock((int)((size - 1) / sizeof(Block)) + 1);
+    int block_num = getFreeBlock(((size - 1) / sizeof(Block)) + 1);
     if (block_num == -1) {
         printf("[newFcb] Disk has Fulled\n");
         exit(EXIT_FAILURE);
@@ -177,83 +177,57 @@ void doMkdir(char* name)
 {
     // 找一个空fcb
     Fcb* p = path[current];
-    for (int i = 0; i < (int)(sizeof(Block) / sizeof(Fcb)); i++) {
+    for (int i = 0; i < (sizeof(Block) / sizeof(Fcb)); i++) {
         if (p->is_existed == 1) {
             p++;
         } else {
             newFcb(p, name, 1, sizeof(Fcb) * 2);
-            path[current]->size = (i + 1) * sizeof(Fcb);
+            path[current]->size += sizeof(Fcb);
             break;
         }
+    }
+}
+
+void doRmdir(char* name)
+{
+    char is_existed = 0;
+    Fcb* p = path[current];
+    for (int i = 0; i < (sizeof(Block) / sizeof(Fcb)); i++) {
+        if (p->is_existed == 1 && strcmp(p->name, name) == 0 && p->is_directory == 1) {
+            is_existed = 1;
+            break;
+        }
+        p++;
+    }
+    if (is_existed) {
+        // 释放fat标记
+        for (int i = 0; i < ((p->size - 1) / sizeof(Block)) + 1; i++) {
+            fat[p->block_number + i] = FREE;
+        }
+        // 删除索引记录
+        p->is_existed = 0;
+    } else {
+        printf("[doRmdir] Not found %s\n", name);
     }
 }
 
 void doLs()
 {
     Fcb* p = path[current];
-    for (int i = 0; i < (int)(path[current]->size / sizeof(Fcb)); i++) {
-        printf("%s ", p->name);
+    int num = path[current]->size / sizeof(Fcb);
+    for (int i = 0; i < (sizeof(Block) / sizeof(Fcb)); i++) {
+        if (p->is_existed) {
+            printf("%s\t", p->name);
+        }
         p++;
     }
     printf("\n");
 }
 
-// void doCd(char* path)
-// {
-//     int tag = -1;
-//     int fd;
-//     char* buf = (char*)malloc(10000);
-//     openfilelist[currfd].count = 0;
-//     do_read(currfd, openfilelist[currfd].length, buf);
-
-//     fcb* fcbptr = (fcb*)buf;
-//     // 查找目标 fcb
-//     for (i = 0; i < (int)(openfilelist[currfd].length / sizeof(fcb)); i++, fcbptr++) {
-//         if (strcmp(fcbptr->filename, dirname) == 0 && fcbptr->attribute == 0) {
-//             tag = 1;
-//             break;
-//         }
-//     }
-//     if (tag != 1) {
-//         printf("my_cd: no such dir\n");
-//         return;
-//     } else {
-//         // . 和 .. 检查
-//         if (strcmp(fcbptr->filename, ".") == 0) {
-//             return;
-//         } else if (strcmp(fcbptr->filename, "..") == 0) {
-//             if (currfd == 0) {
-//                 // root
-//                 return;
-//             } else {
-//                 currfd = my_close(currfd);
-//                 return;
-//             }
-//         } else {
-//             // 其他目录
-//             fd = get_free_openfilelist();
-//             if (fd == -1) {
-//                 return;
-//             }
-//             openfilelist[fd].attribute = fcbptr->attribute;
-//             openfilelist[fd].count = 0;
-//             openfilelist[fd].date = fcbptr->date;
-//             openfilelist[fd].time = fcbptr->time;
-//             strcpy(openfilelist[fd].filename, fcbptr->filename);
-//             strcpy(openfilelist[fd].exname, fcbptr->exname);
-//             openfilelist[fd].first = fcbptr->first;
-//             openfilelist[fd].free = fcbptr->free;
-
-//             openfilelist[fd].fcbstate = 0;
-//             openfilelist[fd].length = fcbptr->length;
-//             strcat(strcat(strcpy(openfilelist[fd].dir, (char*)(openfilelist[currfd].dir)), dirname), "/");
-//             openfilelist[fd].topenfile = 1;
-//             openfilelist[fd].dirno = openfilelist[currfd].first;
-//             openfilelist[fd].diroff = i;
-//             currfd = fd;
-//         }
-//     }
-// }
+void doCd(char* path)
+{
+    // if (strcmp(fcbptr->filename, dirname) == 0 && fcbptr->attribute == 0){}
+}
 
 int main()
 {
@@ -262,12 +236,14 @@ int main()
 
     doMkdir("123");
     doLs();
+    doRmdir("123");
+    doRmdir("345");
+    doLs();
+    doMkdir("345");
+    doLs();
 
     getchar();
 
     releaseDisk();
     return 0;
-    
-    // 成功退出
-    // exit(EXIT_SUCCESS);
 }
