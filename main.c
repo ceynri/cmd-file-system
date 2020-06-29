@@ -188,18 +188,31 @@ void doMkdir(char* name)
     }
 }
 
-void doRmdir(char* name)
+Fcb* searchFcb(char* name)
 {
     char is_existed = 0;
     Fcb* p = path[current];
     for (int i = 0; i < (sizeof(Block) / sizeof(Fcb)); i++) {
-        if (p->is_existed == 1 && strcmp(p->name, name) == 0 && p->is_directory == 1) {
-            is_existed = 1;
-            break;
+        if (
+            p->is_existed == 1
+            && strcmp(p->name, name) == 0
+            && p->is_directory == 1
+        ) {
+            return p;
         }
         p++;
     }
-    if (is_existed) {
+    return NULL;
+}
+
+int doRmdir(char* name)
+{
+    if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) {
+        printf("[doRmdir] You can't delete %s\n", name);
+        return -1;
+    }
+    Fcb* p = searchFcb(name);
+    if (p) {
         // 释放fat标记
         for (int i = 0; i < ((p->size - 1) / sizeof(Block)) + 1; i++) {
             fat[p->block_number + i] = FREE;
@@ -208,7 +221,25 @@ void doRmdir(char* name)
         p->is_existed = 0;
     } else {
         printf("[doRmdir] Not found %s\n", name);
+        return -1;
     }
+    return 0;
+}
+
+int doRename(char* src, char* dst)
+{
+    if (strcmp(src, ".") == 0 || strcmp(src, "..") == 0) {
+        printf("[doRename] You can't rename %s\n", src);
+        return -1;
+    }
+    Fcb* p = searchFcb(src);
+    if (p) {
+        strcpy(p->name, dst);
+    } else {
+        printf("[doRename] Not found %s\n", src);
+        return -1;
+    }
+    return 0;
 }
 
 void doLs()
@@ -236,10 +267,7 @@ int main()
 
     doMkdir("123");
     doLs();
-    doRmdir("123");
-    doRmdir("345");
-    doLs();
-    doMkdir("345");
+    doRename("123", "345");
     doLs();
 
     getchar();
