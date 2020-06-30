@@ -21,6 +21,7 @@ short current; // 当前打开的目录深度
 
 const int FCB_LIST_LEN = sizeof(Block) / sizeof(Fcb); // 一个Block可容纳的Fcb个数
 
+// 申请磁盘空间
 Block* getDisk()
 {
     // 获取共享内存区
@@ -42,6 +43,7 @@ Block* getDisk()
     return disk;
 }
 
+// 初始化启动盘块
 void initBootBlock()
 {
     BootBlock* boot_block = (BootBlock*)disk;
@@ -51,6 +53,7 @@ void initBootBlock()
     boot_block->data_block = disk + DATA_BLOCK;
 }
 
+// 初始化Fat表
 void initFat()
 {
     fat = (char*)(disk + FAT_BLOCK);
@@ -63,6 +66,13 @@ void initFat()
     }
 }
 
+// 获得block编号所对应的Block物理地址的Fcb格式
+Block* getBlock(int block_number)
+{
+    return disk + block_number;
+}
+
+// 设置传入参数为当前时间
 void setCurrentTime(Datetime* datetime)
 {
     time_t rawtime;
@@ -76,7 +86,8 @@ void setCurrentTime(Datetime* datetime)
     datetime->second = time->tm_sec;
 }
 
-void initDirFcb(Fcb* fcb, short block_number, short parent_number)
+// 初始化目录
+void initDir(Fcb* fcb, short block_number, short parent_number)
 {
     // 标记该空间以被使用
     fat[block_number] = USED;
@@ -105,23 +116,25 @@ void initDirFcb(Fcb* fcb, short block_number, short parent_number)
     }
 }
 
-Fcb* getBlock(int block_number)
+// 初始化数据盘块
+void initDataBlock()
 {
-    return (Fcb*)(disk + block_number);
-}
-
-void initDisk()
-{
-    initBootBlock();
-    initFat();
-
-    Fcb* root = getBlock(DATA_BLOCK);
-    initDirFcb(root, DATA_BLOCK, DATA_BLOCK);
+    Fcb* root = (Fcb*)getBlock(DATA_BLOCK);
+    initDir(root, DATA_BLOCK, DATA_BLOCK);
     current = 0;
     open_path[current] = root;
     open_name[current] = "Root";
 }
 
+// 初始化磁盘
+void initDisk()
+{
+    initBootBlock();
+    initFat();
+    initDataBlock();
+}
+
+// 释放磁盘空间
 void releaseDisk()
 {
     // 停止引用共享内存
@@ -138,6 +151,7 @@ void releaseDisk()
     }
 }
 
+// 获得空闲的磁盘Block空间
 int getFreeBlock(int size)
 {
     int count = 0;
@@ -157,11 +171,13 @@ int getFreeBlock(int size)
     return -1;
 }
 
+// 获得占用空间至少所需的Block数
 int getBlockNum(int size)
 {
     return (size - 1) / sizeof(Block) + 1;
 }
 
+// 查找Fcb
 Fcb* searchFcb(char* path, Fcb* root)
 {
     char* name = strtok(path, "/");
@@ -172,13 +188,14 @@ Fcb* searchFcb(char* path, Fcb* root)
             if (next == NULL) {
                 return p;
             }
-            return searchFcb(path + strlen(name) + 1, getBlock(p->block_number));
+            return searchFcb(path + strlen(name) + 1, (Fcb*)getBlock(p->block_number));
         }
         p++;
     }
     return NULL;
 }
 
+// 获得当前Fcb表的第一个空闲位置
 Fcb* getFreeFcb(Fcb* fcb)
 {
     for (int i = 0; i < FCB_LIST_LEN; i++) {
@@ -190,7 +207,8 @@ Fcb* getFreeFcb(Fcb* fcb)
     return NULL;
 }
 
-Fcb* newFcb(Fcb* fcb, char* name, char is_dir, int size)
+// 创建新的 Fcb
+Fcb* initFcb(Fcb* fcb, char* name, char is_dir, int size)
 {
     // 目录名
     strcpy(fcb->name, name);
@@ -200,7 +218,7 @@ Fcb* newFcb(Fcb* fcb, char* name, char is_dir, int size)
     // 文件
     int block_num = getFreeBlock(getBlockNum(size));
     if (block_num == -1) {
-        printf("[newFcb] Disk has Fulled\n");
+        printf("[initFcb] Disk has Fulled\n");
         exit(EXIT_FAILURE);
     }
     fcb->block_number = block_num;
@@ -222,6 +240,9 @@ int split(char** arr, char* str, const char* delims)
     return count;
 }
 
+// DoSth
+
+// mkdir 创建目录指令
 int doMkdir(char* name)
 {
     // 查找是否已存在
@@ -230,19 +251,20 @@ int doMkdir(char* name)
         printf("[doMkdir] %s is existed\n", name);
         return -1;
     }
-    
+
     // 在当前fcb表中插入新目录的fcb
     Fcb* fcb = getFreeFcb(open_path[current]);
-    newFcb(fcb, name, 1, sizeof(Block));
+    initFcb(fcb, name, 1, sizeof(Block));
     fcb->size = sizeof(Fcb) * 2;
     open_path[current]->size += sizeof(Fcb);
 
     // 初始化新目录的fcb
-    Fcb* new_dir = getBlock(fcb->block_number);
-    initDirFcb(new_dir, fcb->block_number, open_path[current]->block_number);
+    Fcb* new_dir = (Fcb*)getBlock(fcb->block_number);
+    initDir(new_dir, fcb->block_number, open_path[current]->block_number);
     return 0;
 }
 
+// 重命名指令
 int doRename(char* src, char* dst)
 {
     if (strcmp(src, ".") == 0 || strcmp(src, "..") == 0) {
@@ -259,6 +281,7 @@ int doRename(char* src, char* dst)
     return 0;
 }
 
+// 打开文件指令
 int doOpen(char* name)
 {
     Fcb* fcb = searchFcb(name, open_path[current]);
@@ -268,7 +291,7 @@ int doOpen(char* name)
             return -1;
         }
         // 存在该文件，即读取文件内容
-        char* p = (char*)(disk + fcb->block_number);
+        char* p = (char*)getBlock(fcb->block_number);
         for (int i = 0; i < fcb->size; i++) {
             printf("%c", *p);
             p++;
@@ -277,13 +300,14 @@ int doOpen(char* name)
     } else {
         // 不存在该文件，则创建文件
         Fcb* fcb = getFreeFcb(open_path[current]);
-        newFcb(fcb, name, 0, sizeof(Block));
+        initFcb(fcb, name, 0, sizeof(Block));
         fcb->size = 0;
         open_path[current]->size += sizeof(Fcb);
     }
     return 0;
 }
 
+// 写入文件指令
 int doWrite(char* name)
 {
     Fcb* fcb = searchFcb(name, open_path[current]);
@@ -309,6 +333,7 @@ int doWrite(char* name)
     return 0;
 }
 
+// rm 删除文件指令
 int doRm(char* name, Fcb* root)
 {
     Fcb* fcb = searchFcb(name, root);
@@ -332,17 +357,17 @@ int doRm(char* name, Fcb* root)
     return 0;
 }
 
+// rmdir 删除目录指令
 int doRmdir(char* name, Fcb* root)
 {
-    if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0)
-    {
+    if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) {
         printf("[doRmdir] You can't delete %s\n", name);
         return -1;
     }
     Fcb* fcb = searchFcb(name, root);
     if (fcb && fcb->is_directory == 1) {
         // 递归删除目录内容
-        Fcb* p = getBlock(fcb->block_number) + 2;
+        Fcb* p = (Fcb*)getBlock(fcb->block_number) + 2;
         for (int i = 2; i < FCB_LIST_LEN; i++) {
             if (p->is_existed == 0) {
                 continue;
@@ -368,6 +393,7 @@ int doRmdir(char* name, Fcb* root)
     return 0;
 }
 
+// ls 目录信息指令
 void doLs()
 {
     Fcb* fcb = open_path[current];
@@ -381,6 +407,7 @@ void doLs()
     printf("\n");
 }
 
+// ls -l 长目录信息指令
 void doLls()
 {
     Fcb* fcb = open_path[current];
@@ -403,6 +430,7 @@ void doLls()
     }
 }
 
+// cd跳转指令
 int doCd(char* path)
 {
     char* names[16];
@@ -432,7 +460,7 @@ int doCd(char* path)
             }
             current++;
             open_name[current] = fcb->name;
-            open_path[current] = getBlock(fcb->block_number);
+            open_path[current] = (Fcb*)getBlock(fcb->block_number);
         } else {
             printf("[doCd] %s is not existed\n", names[i]);
             return -1;
@@ -441,6 +469,7 @@ int doCd(char* path)
     return 0;
 }
 
+// 输出当前路径提示符
 void printPathInfo()
 {
     printf("YangRui@FileSystem:");
@@ -450,18 +479,21 @@ void printPathInfo()
     printf("> ");
 }
 
+// 接收参数
 char* getArg(char* str)
 {
     scanf("%s", str);
     return str;
 }
 
+// 接收指令
 char* doWhat(char* cmd)
 {
     scanf("%s", cmd);
     return cmd;
 }
 
+// 输入指令处理
 int cmdLoopAdapter()
 {
     char buffer[64];
