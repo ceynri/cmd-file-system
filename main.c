@@ -105,12 +105,17 @@ void initDirFcb(Fcb* fcb, short block_number, short parent_number)
     }
 }
 
+Fcb* getBlock(int block_number)
+{
+    return (Fcb*)(disk + block_number);
+}
+
 void initDisk()
 {
     initBootBlock();
     initFat();
 
-    Fcb* root = (Fcb*)(disk + DATA_BLOCK);
+    Fcb* root = getBlock(DATA_BLOCK);
     initDirFcb(root, DATA_BLOCK, DATA_BLOCK);
     current = 0;
     open_path[current] = root;
@@ -157,15 +162,19 @@ int getBlockNum(int size)
     return (size - 1) / sizeof(Block) + 1;
 }
 
-Fcb* searchFcb(char* name)
+Fcb* searchFcb(char* path, Fcb* root)
 {
-    char is_existed = 0;
-    Fcb* fcb = open_path[current];
+    char* name = strtok(path, "/");
+    char* next = strtok(NULL, "/");
+    Fcb* p = root;
     for (int i = 0; i < FCB_LIST_LEN; i++) {
-        if (fcb->is_existed == 1 && strcmp(fcb->name, name) == 0) {
-            return fcb;
+        if (p->is_existed == 1 && strcmp(p->name, name) == 0) {
+            if (next == NULL) {
+                return p;
+            }
+            return searchFcb(next, getBlock(p->block_number));
         }
-        fcb++;
+        p++;
     }
     return NULL;
 }
@@ -215,7 +224,7 @@ char** split(char** arr, char* str, const char* delims)
 int doMkdir(char* name)
 {
     // 查找是否已存在
-    Fcb* s = searchFcb(name);
+    Fcb* s = searchFcb(name, open_path[current]);
     if (s) {
         printf("[doMkdir] %s is existed\n", name);
         return -1;
@@ -228,39 +237,8 @@ int doMkdir(char* name)
     open_path[current]->size += sizeof(Fcb);
 
     // 初始化新目录的fcb
-    Fcb* new_dir = (Fcb*)(disk + fcb->block_number);
+    Fcb* new_dir = getBlock(fcb->block_number);
     initDirFcb(new_dir, fcb->block_number, open_path[current]->block_number);
-    return 0;
-}
-
-// TODO 多层级目录，需要递归删除
-int doRmdir(char* name)
-{
-    // char* path_split[16];
-    // split(path_split, path, "/");
-    if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0)
-    {
-        printf("[doRmdir] You can't delete %s\n", name);
-        return -1;
-    }
-    Fcb* fcb = searchFcb(name);
-    if (fcb && fcb->is_directory == 1) {
-        Fcb* p = (Fcb*)(disk + fcb->block_number) + 2;
-        for (int i = 0; i < FCB_LIST_LEN; i++) {
-
-        }
-        // 释放fat标记
-        for (int i = 0; i < getBlockNum(fcb->size); i++) {
-            fat[fcb->block_number + i] = FREE;
-        }
-        // 删除索引记录
-        fcb->is_existed = 0;
-        // 减小记录的空间大小
-        open_path[current] -= sizeof(fcb);
-    } else {
-        printf("[doRmdir] Not found %s\n", name);
-        return -1;
-    }
     return 0;
 }
 
@@ -270,7 +248,7 @@ int doRename(char* src, char* dst)
         printf("[doRename] You can't rename %s\n", src);
         return -1;
     }
-    Fcb* fcb = searchFcb(src);
+    Fcb* fcb = searchFcb(src, open_path[current]);
     if (fcb) {
         strcpy(fcb->name, dst);
     } else {
@@ -282,7 +260,7 @@ int doRename(char* src, char* dst)
 
 int doOpen(char* name)
 {
-    Fcb* fcb = searchFcb(name);
+    Fcb* fcb = searchFcb(name, open_path[current]);
     if (fcb) {
         if (fcb->is_directory != 0) {
             printf("[doOpen] %s is not readable file\n", name);
@@ -307,7 +285,7 @@ int doOpen(char* name)
 
 int doWrite(char* name)
 {
-    Fcb* fcb = searchFcb(name);
+    Fcb* fcb = searchFcb(name, open_path[current]);
     if (fcb) {
         if (fcb->is_directory != 0) {
             printf("[doWrite] %s is not writable file\n", name);
@@ -330,9 +308,9 @@ int doWrite(char* name)
     return 0;
 }
 
-int doRm(char* name)
+int doRm(char* name, Fcb* root)
 {
-    Fcb* fcb = searchFcb(name);
+    Fcb* fcb = searchFcb(name, root);
     if (fcb) {
         if (fcb->is_directory != 0) {
             printf("[doRm] %s is not file\n", name);
@@ -345,9 +323,47 @@ int doRm(char* name)
         // 删除索引记录
         fcb->is_existed = 0;
         // 减小记录的空间大小
-        open_path[current] -= sizeof(fcb);
+        root->size -= sizeof(fcb);
     } else {
         printf("[doRm] Not found %s\n", name);
+        return -1;
+    }
+    return 0;
+}
+
+int doRmdir(char* name, Fcb* root)
+{
+    // char* path_split[16];
+    // split(path_split, path, "/");
+    if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0)
+    {
+        printf("[doRmdir] You can't delete %s\n", name);
+        return -1;
+    }
+    Fcb* fcb = searchFcb(name, root);
+    if (fcb && fcb->is_directory == 1) {
+        // 递归删除目录内容
+        Fcb* p = getBlock(fcb->block_number) + 2;
+        for (int i = 2; i < FCB_LIST_LEN; i++) {
+            if (p->is_existed == 0) {
+                continue;
+            } else if (p->is_directory) {
+                doRmdir(p->name, p);
+            } else {
+                doRm(p->name, p);
+            }
+            p++;
+        }
+        // 释放fat标记
+        for (int i = 0; i < getBlockNum(fcb->size); i++) {
+            fat[fcb->block_number + i] = FREE;
+        }
+        // 删除索引记录
+        fcb->is_existed = 0;
+        // 减小记录的空间大小
+        root->size -= sizeof(fcb);
+    } else {
+        printf("[doRmdir] Not found %s\n", name);
         return -1;
     }
     return 0;
@@ -402,7 +418,7 @@ int doCd(char* name)
         return -1;
     }
     // 查找是否存在
-    Fcb* fcb = searchFcb(name);
+    Fcb* fcb = searchFcb(name, open_path[current]);
     if (fcb) {
         if (fcb->is_directory != 1) {
             printf("[doCd] %s is not directory\n", name);
@@ -410,7 +426,7 @@ int doCd(char* name)
         }
         current++;
         open_name[current] = fcb->name;
-        open_path[current] = (Fcb*)(disk + fcb->block_number);
+        open_path[current] = getBlock(fcb->block_number);
         return 0;
     } else {
         printf("[doCd] %s is not existed\n", name);
@@ -448,7 +464,7 @@ int cmdLoopAdapter()
         if (strcmp(buffer, "mkdir") == 0) {
             doMkdir(getArg(buffer));
         } else if (strcmp(buffer, "rmdir") == 0) {
-            doRmdir(getArg(buffer));
+            doRmdir(getArg(buffer), open_path[current]);
         } else if (strcmp(buffer, "rename") == 0) {
             doRename(getArg(buffer), getArg(buffer));
         } else if (strcmp(buffer, "open") == 0) {
@@ -456,7 +472,7 @@ int cmdLoopAdapter()
         } else if (strcmp(buffer, "write") == 0) {
             doWrite(getArg(buffer));
         } else if (strcmp(buffer, "rm") == 0) {
-            doRm(getArg(buffer));
+            doRm(getArg(buffer), open_path[current]);
         } else if (strcmp(buffer, "ls") == 0) {
             doLs();
         } else if (strcmp(buffer, "lls") == 0) {
