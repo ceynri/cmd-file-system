@@ -172,7 +172,7 @@ Fcb* searchFcb(char* path, Fcb* root)
             if (next == NULL) {
                 return p;
             }
-            return searchFcb(next, getBlock(p->block_number));
+            return searchFcb(path + strlen(name) + 1, getBlock(p->block_number));
         }
         p++;
     }
@@ -210,15 +210,16 @@ Fcb* newFcb(Fcb* fcb, char* name, char is_dir, int size)
 }
 
 // 字符分割函数
-char** split(char** arr, char* str, const char* delims)
+int split(char** arr, char* str, const char* delims)
 {
-    char* s = NULL;
-    s = strtok(str, delims);
+    int count = 0;
+    char* s = strtok(str, delims);
     while (s != NULL) {
+        count++;
         *arr++ = s;
         s = strtok(NULL, delims);
     }
-    return arr;
+    return count;
 }
 
 int doMkdir(char* name)
@@ -333,8 +334,6 @@ int doRm(char* name, Fcb* root)
 
 int doRmdir(char* name, Fcb* root)
 {
-    // char* path_split[16];
-    // split(path_split, path, "/");
     if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0)
     {
         printf("[doRmdir] You can't delete %s\n", name);
@@ -404,34 +403,42 @@ void doLls()
     }
 }
 
-int doCd(char* name)
+int doCd(char* path)
 {
-    if (strcmp(name, ".") == 0) {
-        return 0;
-    }
-    if (strcmp(name, "..") == 0) {
-        current = (current > 0 ? current - 1 : 0);
-        return 0;
-    }
-    if (current == 15) {
-        printf("[doCd] Depth of the directory has reached the upper limit\n");
-        return -1;
-    }
-    // 查找是否存在
-    Fcb* fcb = searchFcb(name, open_path[current]);
-    if (fcb) {
-        if (fcb->is_directory != 1) {
-            printf("[doCd] %s is not directory\n", name);
+    char* names[16];
+    int len = split(names, path, "/");
+    for (int i = 0; i < len; i++) {
+        if (strcmp(names[i], ".") == 0) {
+            continue;
+        }
+        if (strcmp(names[i], "..") == 0) {
+            if (current == 0) {
+                printf("[doCd] Depth of the directory has reached the lower limit\n");
+                return -1;
+            }
+            current--;
+            continue;
+        }
+        if (current == 15) {
+            printf("[doCd] Depth of the directory has reached the upper limit\n");
             return -1;
         }
-        current++;
-        open_name[current] = fcb->name;
-        open_path[current] = getBlock(fcb->block_number);
-        return 0;
-    } else {
-        printf("[doCd] %s is not existed\n", name);
-        return -1;
+        // 查找是否存在
+        Fcb* fcb = searchFcb(names[i], open_path[current]);
+        if (fcb) {
+            if (fcb->is_directory != 1) {
+                printf("[doCd] %s is not directory\n", names[i]);
+                return -1;
+            }
+            current++;
+            open_name[current] = fcb->name;
+            open_path[current] = getBlock(fcb->block_number);
+        } else {
+            printf("[doCd] %s is not existed\n", names[i]);
+            return -1;
+        }
     }
+    return 0;
 }
 
 void printPathInfo()
