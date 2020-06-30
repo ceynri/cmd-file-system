@@ -341,10 +341,34 @@ void doLs()
     printf("\n");
 }
 
-void doCd(char* path)
+int doCd(char* name)
 {
-    // if (strcmp(fcbptr->filename, dirname) == 0 && fcbptr->attribute == 0){}
+    if (strcmp(name, ".") == 0) {
+        return 0;
+    }
+    if (strcmp(name, "..") == 0) {
+        current = (current > 0 ? current - 1 : 0);
+        return 0;
+    }
+    if (current == 15) {
+        printf("[doCd] Depth of the directory has reached the upper limit\n");
+        return -1;
+    }
+    // 查找是否存在
+    Fcb* fcb = searchFcb(name);
+    if (fcb) {
+        if (fcb->is_directory != 1) {
+            printf("[doCd] %s is not directory\n", name);
+            return -1;
+        }
+        path[++current] = (Fcb*)(disk + fcb->block_number);
+        return 0;
+    } else {
+        printf("[doCd] %s is not existed\n", name);
+        return -1;
+    }
 }
+
 void outputPathInfo()
 {
     printf("Haze >");
@@ -382,6 +406,8 @@ int cmdLoopAdapter()
             doRm(getArg(buffer));
         } else if (strcmp(buffer, "ls") == 0) {
             doLs();
+        } else if (strcmp(buffer, "cd") == 0) {
+            doCd(getArg(buffer));
         } else if (strcmp(buffer, "exit") == 0) {
             return 0;
         } else {
