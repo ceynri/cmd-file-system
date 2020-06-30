@@ -9,40 +9,33 @@
 #include "disk.h"
 #include "file.h"
 
-// 硬盘指针
-Block* disk;
-// 硬盘空间
-void* disk_space = (void*)0;
-// 共享内存id
-int shmid;
+Block* disk; // 硬盘指针
+void* disk_space = (void*)0; // 硬盘空间
+int shmid; // 共享内存id
 
-// fat表
-char* fat;
+char* fat; // fat表
 
-// 当前打开的目录的绝对路径数组
-Fcb* path[16];
-char* path_name[16];
-// 当前打开的目录深度
-short current;
+Fcb* path[16]; // 当前打开的目录路径fcb数组
+char* path_name[16]; // 当前打开的目录路径名数组
+short current; // 当前打开的目录深度
 
-const int FCB_LIST_LEN = sizeof(Block) / sizeof(Fcb);
+const int FCB_LIST_LEN = sizeof(Block) / sizeof(Fcb); // 一个Block可容纳的Fcb个数
 
 Block* getDisk()
 {
     // 获取共享内存区
-    shmid = shmget((key_t)1110, sizeof(Disk), 0666 | IPC_CREAT);
-    printf("Shmid: %d\n", shmid);
+    shmid = shmget((key_t)1127, sizeof(Disk), 0666 | IPC_CREAT);
+    // printf("Shmid: %d\n", shmid);
     if (shmid == -1) {
         // 获取失败
-        fprintf(stderr, "Shmget failed\n");
+        fprintf(stderr, "[getDisk] Shmget failed\n");
         exit(EXIT_FAILURE);
     }
-
     // 启用进程对该共享内存区的访问
     disk_space = shmat(shmid, (void*)0, 0);
     if (disk_space == (void*)-1) {
         // 启用失败
-        fprintf(stderr, "Shmat failed\n");
+        fprintf(stderr, "[getDisk] Shmat failed\n");
         exit(EXIT_FAILURE);
     }
     disk = (Block*)disk_space;
@@ -129,13 +122,13 @@ void releaseDisk()
     // 停止引用共享内存
     if (shmdt(disk_space) == -1) {
         // 停止失败
-        fprintf(stderr, "Shmdt failed\n");
+        fprintf(stderr, "[releaseDisk] Shmdt failed\n");
         exit(EXIT_FAILURE);
     }
     // 删除共享内存
     if (shmctl(shmid, IPC_RMID, 0) == -1) {
         // 删除失败
-        fprintf(stderr, "Shmctl failed\n");
+        fprintf(stderr, "[releaseDisk] Shmctl failed\n");
         exit(EXIT_FAILURE);
     }
 }
@@ -298,10 +291,15 @@ int doWrite(char* name)
             return -1;
         }
         // 存在该文件，即尝试写入文件内容
-        char* p = (char*)(disk + fcb->block_number);
-        fflush(stdin);
-        scanf("%[^\n]", p);
-        fcb->size = strlen(p);
+        char* head = (char*)(disk + fcb->block_number);
+        char* p = head;
+        // 去掉蜜汁回车
+        getchar();
+        while ((*p = getchar()) != 27 && *p != EOF) {
+            p++;
+        }
+        *p = 0;
+        fcb->size = strlen(head);
     } else {
         // 不存在该文件
         printf("[doWrite] Not found %s\n", name);
@@ -418,7 +416,7 @@ int cmdLoopAdapter()
             doCd(getArg(buffer));
         } else if (strcmp(buffer, "exit") == 0) {
             return 0;
-        } else {
+        } else if (strlen(buffer) != 0) {
             printf("[cmdLoopAdapter] Unsupported command\n");
         }
         fflush(stdin);
