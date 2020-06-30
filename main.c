@@ -180,7 +180,9 @@ int getBlockNum(int size)
 // 查找Fcb
 Fcb* searchFcb(char* path, Fcb* root)
 {
-    char* name = strtok(path, "/");
+    char _path[64];
+    strcpy(_path, path);
+    char* name = strtok(_path, "/");
     char* next = strtok(NULL, "/");
     Fcb* p = root;
     for (int i = 0; i < FCB_LIST_LEN; i++) {
@@ -231,7 +233,9 @@ Fcb* initFcb(Fcb* fcb, char* name, char is_dir, int size)
 int split(char** arr, char* str, const char* delims)
 {
     int count = 0;
-    char* s = strtok(str, delims);
+    char _str[64];
+    strcpy(_str, str);
+    char* s = strtok(_str, delims);
     while (s != NULL) {
         count++;
         *arr++ = s;
@@ -240,39 +244,74 @@ int split(char** arr, char* str, const char* delims)
     return count;
 }
 
+// 获得路径地址最后一项的名字
+char* getPathLastName(char* path)
+{
+    char _path[64];
+    strcpy(_path, path);
+    char* name = strtok(_path, "/");
+    char* next = name;
+    while (next != NULL) {
+        name = next;
+        next = strtok(NULL, "/");
+    }
+    return name;
+}
+
 // DoSth
 
 // mkdir 创建目录指令
-int doMkdir(char* name)
+int doMkdir(char* path)
 {
     // 查找是否已存在
-    Fcb* s = searchFcb(name, open_path[current]);
-    if (s) {
-        printf("[doMkdir] %s is existed\n", name);
+    Fcb* res = searchFcb(path, open_path[current]);
+    if (res) {
+        printf("[doMkdir] %s is existed\n", path);
         return -1;
     }
-
+    // 找到创建目录的上一级
+    char parent_path[64];
+    strcpy(parent_path, path);
+    for (int i = strlen(parent_path); i >= 0; i--) {
+        if (parent_path[i] == '/') {
+            parent_path[i] = 0;
+            break;
+        }
+        parent_path[i] = 0;
+    }
+    Fcb* parent;
+    if (strlen(parent_path) != 0) {
+        Fcb* parent_pcb = searchFcb(parent_path, open_path[current]);
+        if (parent_pcb == NULL) {
+            printf("[doMkdir] Not found %s\n", parent_path);
+            return -1;
+        }
+        parent = (Fcb*)getBlock(parent_pcb->block_number);
+    } else {
+        parent = open_path[current];
+    }
     // 在当前fcb表中插入新目录的fcb
-    Fcb* fcb = getFreeFcb(open_path[current]);
+    Fcb* fcb = getFreeFcb(parent);
+    char* name = getPathLastName(path);
     initFcb(fcb, name, 1, sizeof(Block));
     fcb->size = sizeof(Fcb) * 2;
-    open_path[current]->size += sizeof(Fcb);
+    parent->size += sizeof(Fcb);
 
     // 初始化新目录的fcb
     Fcb* new_dir = (Fcb*)getBlock(fcb->block_number);
-    initDir(new_dir, fcb->block_number, open_path[current]->block_number);
+    initDir(new_dir, fcb->block_number, parent->block_number);
     return 0;
 }
 
 // 重命名指令
 int doRename(char* src, char* dst)
 {
-    if (strcmp(src, ".") == 0 || strcmp(src, "..") == 0) {
-        printf("[doRename] You can't rename %s\n", src);
-        return -1;
-    }
     Fcb* fcb = searchFcb(src, open_path[current]);
     if (fcb) {
+        if (strcmp(fcb->name, ".") == 0 || strcmp(fcb->name, "..") == 0) {
+            printf("[doRename] You can't rename %s\n", src);
+            return -1;
+        }
         strcpy(fcb->name, dst);
     } else {
         printf("[doRename] Not found %s\n", src);
@@ -282,12 +321,12 @@ int doRename(char* src, char* dst)
 }
 
 // 打开文件指令
-int doOpen(char* name)
+int doOpen(char* path)
 {
-    Fcb* fcb = searchFcb(name, open_path[current]);
+    Fcb* fcb = searchFcb(path, open_path[current]);
     if (fcb) {
         if (fcb->is_directory != 0) {
-            printf("[doOpen] %s is not readable file\n", name);
+            printf("[doOpen] %s is not readable file\n", fcb->name);
             return -1;
         }
         // 存在该文件，即读取文件内容
@@ -300,6 +339,8 @@ int doOpen(char* name)
     } else {
         // 不存在该文件，则创建文件
         Fcb* fcb = getFreeFcb(open_path[current]);
+        // 获得路径地址最后一项的名字
+        char* name = getPathLastName(path);
         initFcb(fcb, name, 0, sizeof(Block));
         fcb->size = 0;
         open_path[current]->size += sizeof(Fcb);
@@ -308,12 +349,12 @@ int doOpen(char* name)
 }
 
 // 写入文件指令
-int doWrite(char* name)
+int doWrite(char* path)
 {
-    Fcb* fcb = searchFcb(name, open_path[current]);
+    Fcb* fcb = searchFcb(path, open_path[current]);
     if (fcb) {
         if (fcb->is_directory != 0) {
-            printf("[doWrite] %s is not writable file\n", name);
+            printf("[doWrite] %s is not writable file\n", fcb->name);
             return -1;
         }
         // 存在该文件，即尝试写入文件内容
@@ -328,18 +369,18 @@ int doWrite(char* name)
         fcb->size = strlen(head);
     } else {
         // 不存在该文件
-        printf("[doWrite] Not found %s\n", name);
+        printf("[doWrite] Not found %s\n", path);
     }
     return 0;
 }
 
 // rm 删除文件指令
-int doRm(char* name, Fcb* root)
+int doRm(char* path, Fcb* root)
 {
-    Fcb* fcb = searchFcb(name, root);
+    Fcb* fcb = searchFcb(path, root);
     if (fcb) {
         if (fcb->is_directory != 0) {
-            printf("[doRm] %s is not file\n", name);
+            printf("[doRm] %s is not file\n", fcb->name);
             return -1;
         }
         // 释放fat标记
@@ -349,23 +390,23 @@ int doRm(char* name, Fcb* root)
         // 删除索引记录
         fcb->is_existed = 0;
         // 减小记录的空间大小
-        root->size -= sizeof(fcb);
+        root->size -= sizeof(Fcb);
     } else {
-        printf("[doRm] Not found %s\n", name);
+        printf("[doRm] Not found %s\n", path);
         return -1;
     }
     return 0;
 }
 
 // rmdir 删除目录指令
-int doRmdir(char* name, Fcb* root)
+int doRmdir(char* path, Fcb* root)
 {
-    if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) {
-        printf("[doRmdir] You can't delete %s\n", name);
-        return -1;
-    }
-    Fcb* fcb = searchFcb(name, root);
+    Fcb* fcb = searchFcb(path, root);
     if (fcb && fcb->is_directory == 1) {
+        if (strcmp(fcb->name, ".") == 0 || strcmp(fcb->name, "..") == 0) {
+            printf("[doRmdir] You can't delete %s\n", fcb->name);
+            return -1;
+        }
         // 递归删除目录内容
         Fcb* p = (Fcb*)getBlock(fcb->block_number) + 2;
         for (int i = 2; i < FCB_LIST_LEN; i++) {
@@ -385,9 +426,9 @@ int doRmdir(char* name, Fcb* root)
         // 删除索引记录
         fcb->is_existed = 0;
         // 减小记录的空间大小
-        root->size -= sizeof(fcb);
+        root->size -= sizeof(Fcb);
     } else {
-        printf("[doRmdir] Not found %s\n", name);
+        printf("[doRmdir] Not found %s\n", path);
         return -1;
     }
     return 0;
@@ -497,6 +538,7 @@ char* doWhat(char* cmd)
 int cmdLoopAdapter()
 {
     char buffer[64];
+    char buffer2[64];
     while (1) {
         printPathInfo();
         doWhat(buffer);
@@ -505,7 +547,9 @@ int cmdLoopAdapter()
         } else if (strcmp(buffer, "rmdir") == 0) {
             doRmdir(getArg(buffer), open_path[current]);
         } else if (strcmp(buffer, "rename") == 0) {
-            doRename(getArg(buffer), getArg(buffer));
+            getArg(buffer);
+            getArg(buffer2);
+            doRename(buffer, buffer2);
         } else if (strcmp(buffer, "open") == 0) {
             doOpen(getArg(buffer));
         } else if (strcmp(buffer, "write") == 0) {
