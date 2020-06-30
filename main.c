@@ -21,6 +21,90 @@ short current; // 当前打开的目录深度
 
 const int FCB_LIST_LEN = sizeof(Block) / sizeof(Fcb); // 一个Block可容纳的Fcb个数
 
+// 函数声明
+
+Block* getDisk();
+void releaseDisk();
+void initDisk();
+void initBootBlock();
+void initDataBlock();
+void initFat();
+void initDir(Fcb* fcb, short block_number, short parent_number);
+
+Block* getBlock(int block_number);
+void setCurrentTime(Datetime* datetime);
+int getFreeBlock(int size);
+int getBlockNum(int size);
+Fcb* searchFcb(char* path, Fcb* root);
+Fcb* getFreeFcb(Fcb* fcb);
+Fcb* initFcb(Fcb* fcb, char* name, char is_dir, int size);
+char* getPathLastName(char* path);
+
+// Do指令方法
+int doMkdir(char* path);
+int doRename(char* src, char* dst);
+int doOpen(char* path);
+int doWrite(char* path);
+int doRm(char* path, Fcb* root);
+void doLs();
+void doLls();
+int doCd(char* path);
+
+void printPathInfo();
+char* getArg(char* str);
+char* doWhat(char* cmd);
+int cmdLoopAdapter();
+int split(char** arr, char* str, const char* delims);
+
+int main()
+{
+    getDisk();
+    initDisk();
+    int ret = cmdLoopAdapter();
+    releaseDisk();
+    return ret;
+}
+
+// 输入指令处理
+int cmdLoopAdapter()
+{
+    char buffer[64];
+    char buffer2[64];
+    while (1) {
+        printPathInfo();
+        doWhat(buffer);
+        if (strcmp(buffer, "mkdir") == 0) {
+            doMkdir(getArg(buffer));
+        } else if (strcmp(buffer, "rmdir") == 0) {
+            doRmdir(getArg(buffer), open_path[current]);
+        } else if (strcmp(buffer, "rename") == 0) {
+            getArg(buffer);
+            getArg(buffer2);
+            doRename(buffer, buffer2);
+        } else if (strcmp(buffer, "open") == 0) {
+            doOpen(getArg(buffer));
+        } else if (strcmp(buffer, "write") == 0) {
+            doWrite(getArg(buffer));
+        } else if (strcmp(buffer, "rm") == 0) {
+            doRm(getArg(buffer), open_path[current]);
+        } else if (strcmp(buffer, "ls") == 0) {
+            doLs();
+        } else if (strcmp(buffer, "lls") == 0) {
+            doLls();
+        } else if (strcmp(buffer, "cd") == 0) {
+            doCd(getArg(buffer));
+        } else if (strcmp(buffer, "exit") == 0) {
+            return 0;
+        } else if (strlen(buffer) != 0) {
+            printf("[cmdLoopAdapter] Unsupported command\n");
+        }
+        fflush(stdin);
+    }
+    return -1;
+}
+
+// 初始化相关
+
 // 申请磁盘空间
 Block* getDisk()
 {
@@ -41,6 +125,14 @@ Block* getDisk()
     }
     disk = (Block*)disk_space;
     return disk;
+}
+
+// 初始化磁盘
+void initDisk()
+{
+    initBootBlock();
+    initFat();
+    initDataBlock();
 }
 
 // 初始化启动盘块
@@ -66,24 +158,14 @@ void initFat()
     }
 }
 
-// 获得block编号所对应的Block物理地址的Fcb格式
-Block* getBlock(int block_number)
+// 初始化数据盘块
+void initDataBlock()
 {
-    return disk + block_number;
-}
-
-// 设置传入参数为当前时间
-void setCurrentTime(Datetime* datetime)
-{
-    time_t rawtime;
-    time(&rawtime);
-    struct tm* time = localtime(&rawtime);
-    datetime->year = (time->tm_year + 1900);
-    datetime->month = (time->tm_mon + 1);
-    datetime->day = time->tm_mday;
-    datetime->hour = time->tm_hour;
-    datetime->minute = time->tm_min;
-    datetime->second = time->tm_sec;
+    Fcb* root = (Fcb*)getBlock(DATA_BLOCK);
+    initDir(root, DATA_BLOCK, DATA_BLOCK);
+    current = 0;
+    open_path[current] = root;
+    open_name[current] = "Root";
 }
 
 // 初始化目录
@@ -116,24 +198,6 @@ void initDir(Fcb* fcb, short block_number, short parent_number)
     }
 }
 
-// 初始化数据盘块
-void initDataBlock()
-{
-    Fcb* root = (Fcb*)getBlock(DATA_BLOCK);
-    initDir(root, DATA_BLOCK, DATA_BLOCK);
-    current = 0;
-    open_path[current] = root;
-    open_name[current] = "Root";
-}
-
-// 初始化磁盘
-void initDisk()
-{
-    initBootBlock();
-    initFat();
-    initDataBlock();
-}
-
 // 释放磁盘空间
 void releaseDisk()
 {
@@ -149,6 +213,34 @@ void releaseDisk()
         fprintf(stderr, "[releaseDisk] Shmctl failed\n");
         exit(EXIT_FAILURE);
     }
+}
+
+// get/set函数
+
+// 设置传入参数为当前时间
+void setCurrentTime(Datetime* datetime)
+{
+    time_t rawtime;
+    time(&rawtime);
+    struct tm* time = localtime(&rawtime);
+    datetime->year = (time->tm_year + 1900);
+    datetime->month = (time->tm_mon + 1);
+    datetime->day = time->tm_mday;
+    datetime->hour = time->tm_hour;
+    datetime->minute = time->tm_min;
+    datetime->second = time->tm_sec;
+}
+
+// 获得block编号所对应的Block物理地址的Fcb格式
+Block* getBlock(int block_number)
+{
+    return disk + block_number;
+}
+
+// 获得占用空间至少所需的Block数
+int getBlockNum(int size)
+{
+    return (size - 1) / sizeof(Block) + 1;
 }
 
 // 获得空闲的磁盘Block空间
@@ -169,12 +261,6 @@ int getFreeBlock(int size)
         }
     }
     return -1;
-}
-
-// 获得占用空间至少所需的Block数
-int getBlockNum(int size)
-{
-    return (size - 1) / sizeof(Block) + 1;
 }
 
 // 查找Fcb
@@ -229,21 +315,6 @@ Fcb* initFcb(Fcb* fcb, char* name, char is_dir, int size)
     return fcb;
 }
 
-// 字符分割函数
-int split(char** arr, char* str, const char* delims)
-{
-    int count = 0;
-    char _str[64];
-    strcpy(_str, str);
-    char* s = strtok(_str, delims);
-    while (s != NULL) {
-        count++;
-        *arr++ = s;
-        s = strtok(NULL, delims);
-    }
-    return count;
-}
-
 // 获得路径地址最后一项的名字
 char* getPathLastName(char* path)
 {
@@ -258,7 +329,7 @@ char* getPathLastName(char* path)
     return name;
 }
 
-// DoSth
+// Do指令方法
 
 // mkdir 创建目录指令
 int doMkdir(char* path)
@@ -300,6 +371,42 @@ int doMkdir(char* path)
     // 初始化新目录的fcb
     Fcb* new_dir = (Fcb*)getBlock(fcb->block_number);
     initDir(new_dir, fcb->block_number, parent->block_number);
+    return 0;
+}
+
+// rmdir 删除目录指令
+int doRmdir(char* path, Fcb* root)
+{
+    Fcb* fcb = searchFcb(path, root);
+    if (fcb && fcb->is_directory == 1) {
+        if (strcmp(fcb->name, ".") == 0 || strcmp(fcb->name, "..") == 0) {
+            printf("[doRmdir] You can't delete %s\n", fcb->name);
+            return -1;
+        }
+        // 递归删除目录内容
+        Fcb* p = (Fcb*)getBlock(fcb->block_number) + 2;
+        for (int i = 2; i < FCB_LIST_LEN; i++) {
+            if (p->is_existed == 0) {
+                continue;
+            } else if (p->is_directory) {
+                doRmdir(p->name, p);
+            } else {
+                doRm(p->name, p);
+            }
+            p++;
+        }
+        // 释放fat标记
+        for (int i = 0; i < getBlockNum(fcb->size); i++) {
+            fat[fcb->block_number + i] = FREE;
+        }
+        // 删除索引记录
+        fcb->is_existed = 0;
+        // 减小记录的空间大小
+        root->size -= sizeof(Fcb);
+    } else {
+        printf("[doRmdir] Not found %s\n", path);
+        return -1;
+    }
     return 0;
 }
 
@@ -398,42 +505,6 @@ int doRm(char* path, Fcb* root)
     return 0;
 }
 
-// rmdir 删除目录指令
-int doRmdir(char* path, Fcb* root)
-{
-    Fcb* fcb = searchFcb(path, root);
-    if (fcb && fcb->is_directory == 1) {
-        if (strcmp(fcb->name, ".") == 0 || strcmp(fcb->name, "..") == 0) {
-            printf("[doRmdir] You can't delete %s\n", fcb->name);
-            return -1;
-        }
-        // 递归删除目录内容
-        Fcb* p = (Fcb*)getBlock(fcb->block_number) + 2;
-        for (int i = 2; i < FCB_LIST_LEN; i++) {
-            if (p->is_existed == 0) {
-                continue;
-            } else if (p->is_directory) {
-                doRmdir(p->name, p);
-            } else {
-                doRm(p->name, p);
-            }
-            p++;
-        }
-        // 释放fat标记
-        for (int i = 0; i < getBlockNum(fcb->size); i++) {
-            fat[fcb->block_number + i] = FREE;
-        }
-        // 删除索引记录
-        fcb->is_existed = 0;
-        // 减小记录的空间大小
-        root->size -= sizeof(Fcb);
-    } else {
-        printf("[doRmdir] Not found %s\n", path);
-        return -1;
-    }
-    return 0;
-}
-
 // ls 目录信息指令
 void doLs()
 {
@@ -520,6 +591,23 @@ void printPathInfo()
     printf("> ");
 }
 
+// 工具
+
+// 字符分割函数
+int split(char** arr, char* str, const char* delims)
+{
+    int count = 0;
+    char _str[64];
+    strcpy(_str, str);
+    char* s = strtok(_str, delims);
+    while (s != NULL) {
+        count++;
+        *arr++ = s;
+        s = strtok(NULL, delims);
+    }
+    return count;
+}
+
 // 接收参数
 char* getArg(char* str)
 {
@@ -532,51 +620,4 @@ char* doWhat(char* cmd)
 {
     scanf("%s", cmd);
     return cmd;
-}
-
-// 输入指令处理
-int cmdLoopAdapter()
-{
-    char buffer[64];
-    char buffer2[64];
-    while (1) {
-        printPathInfo();
-        doWhat(buffer);
-        if (strcmp(buffer, "mkdir") == 0) {
-            doMkdir(getArg(buffer));
-        } else if (strcmp(buffer, "rmdir") == 0) {
-            doRmdir(getArg(buffer), open_path[current]);
-        } else if (strcmp(buffer, "rename") == 0) {
-            getArg(buffer);
-            getArg(buffer2);
-            doRename(buffer, buffer2);
-        } else if (strcmp(buffer, "open") == 0) {
-            doOpen(getArg(buffer));
-        } else if (strcmp(buffer, "write") == 0) {
-            doWrite(getArg(buffer));
-        } else if (strcmp(buffer, "rm") == 0) {
-            doRm(getArg(buffer), open_path[current]);
-        } else if (strcmp(buffer, "ls") == 0) {
-            doLs();
-        } else if (strcmp(buffer, "lls") == 0) {
-            doLls();
-        } else if (strcmp(buffer, "cd") == 0) {
-            doCd(getArg(buffer));
-        } else if (strcmp(buffer, "exit") == 0) {
-            return 0;
-        } else if (strlen(buffer) != 0) {
-            printf("[cmdLoopAdapter] Unsupported command\n");
-        }
-        fflush(stdin);
-    }
-    return -1;
-}
-
-int main()
-{
-    getDisk();
-    initDisk();
-    int ret = cmdLoopAdapter();
-    releaseDisk();
-    return ret;
 }
