@@ -21,6 +21,7 @@ char* fat;
 
 // 当前打开的目录的绝对路径数组
 Fcb* path[16];
+char* path_name[16];
 // 当前打开的目录深度
 short current;
 
@@ -120,6 +121,7 @@ void initDisk()
     initDirFcb(root, DATA_BLOCK, DATA_BLOCK);
     current = 0;
     path[current] = root;
+    path_name[current] = "Root";
 }
 
 void releaseDisk()
@@ -361,7 +363,9 @@ int doCd(char* name)
             printf("[doCd] %s is not directory\n", name);
             return -1;
         }
-        path[++current] = (Fcb*)(disk + fcb->block_number);
+        current++;
+        path_name[current] = fcb->name;
+        path[current] = (Fcb*)(disk + fcb->block_number);
         return 0;
     } else {
         printf("[doCd] %s is not existed\n", name);
@@ -369,9 +373,13 @@ int doCd(char* name)
     }
 }
 
-void outputPathInfo()
+void printPathInfo()
 {
-    printf("Haze >");
+    printf("YangRui@FileSystem:");
+    for (int i = 0; i <= current; i++) {
+        printf("/%s", path_name[i]);
+    }
+    printf("> ");
 }
 
 char* getArg(char* str)
@@ -390,7 +398,7 @@ int cmdLoopAdapter()
 {
     char buffer[64];
     while (1) {
-        outputPathInfo();
+        printPathInfo();
         doWhat(buffer);
         if (strcmp(buffer, "mkdir") == 0) {
             doMkdir(getArg(buffer));
