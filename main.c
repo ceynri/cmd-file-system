@@ -205,14 +205,23 @@ Fcb* newFcb(Fcb* fcb, char* name, char is_dir, int size)
     return fcb;
 }
 
-void doMkdir(char* name)
+int doMkdir(char* name)
 {
+    // 查找是否已存在
+    Fcb* s = searchFcb(name);
+    if (s) {
+        printf("[doMkdir] %s is existed\n", name);
+        return -1;
+    }
+    // 在当前fcb表中插入新目录的fcb
     Fcb* fcb = getFreeFcb(path[current]);
     newFcb(fcb, name, 1, sizeof(Block));
     fcb->size = sizeof(Fcb) * 2;
     path[current]->size += sizeof(Fcb);
+    // 初始化新目录的fcb
     Fcb* new_dir = (Fcb*)(disk + fcb->block_number);
     initDirFcb(new_dir, fcb->block_number, path[current]->block_number);
+    return 0;
 }
 
 // TODO 多层级目录，需要递归删除
@@ -267,6 +276,7 @@ int doOpen(char* name)
             printf("%c", *p);
             p++;
         }
+        printf("\n");
     } else {
         // 不存在该文件，则创建文件
         Fcb* fcb = getFreeFcb(path[current]);
@@ -287,6 +297,7 @@ int doWrite(char* name)
         }
         // 存在该文件，即尝试写入文件内容
         char* p = (char*)(disk + fcb->block_number);
+        fflush(stdin);
         scanf("%[^\n]", p);
         fcb->size = strlen(p);
     } else {
@@ -327,45 +338,65 @@ void doLs()
         }
         fcb++;
     }
+    printf("\n");
 }
 
 void doCd(char* path)
 {
     // if (strcmp(fcbptr->filename, dirname) == 0 && fcbptr->attribute == 0){}
 }
+void outputPathInfo()
+{
+    printf("Haze >");
+}
+
+char* getArg(char* str)
+{
+    scanf("%s", str);
+    return str;
+}
+
+char* doWhat(char* cmd)
+{
+    scanf("%s", cmd);
+    return cmd;
+}
+
+int cmdLoopAdapter()
+{
+    char buffer[64];
+    while (1) {
+        outputPathInfo();
+        doWhat(buffer);
+        if (strcmp(buffer, "mkdir") == 0) {
+            doMkdir(getArg(buffer));
+        } else if (strcmp(buffer, "rmdir") == 0) {
+            doRmdir(getArg(buffer));
+        } else if (strcmp(buffer, "rename") == 0) {
+            doRename(getArg(buffer), getArg(buffer));
+        } else if (strcmp(buffer, "open") == 0) {
+            doOpen(getArg(buffer));
+        } else if (strcmp(buffer, "write") == 0) {
+            doWrite(getArg(buffer));
+        } else if (strcmp(buffer, "rm") == 0) {
+            doRm(getArg(buffer));
+        } else if (strcmp(buffer, "ls") == 0) {
+            doLs();
+        } else if (strcmp(buffer, "exit") == 0) {
+            return 0;
+        } else {
+            printf("[cmdLoopAdapter] Unsupported command\n");
+        }
+        fflush(stdin);
+    }
+    return -1;
+}
 
 int main()
 {
     getDisk();
     initDisk();
-
-    doMkdir("123");
-    printf("\n");
-    doLs();
-    printf("\n");
-    doRmdir("123");
-    printf("\n");
-    doLs();
-    printf("\n");
-    doOpen("345");
-    printf("\n");
-    doLs();
-    printf("\n");
-    doRename("345", "456");
-    printf("\n");
-    doLs();
-    printf("\n");
-    doWrite("456");
-    printf("\n");
-    doOpen("456");
-    printf("\n");
-    doRm("456");
-    printf("\n");
-    doLs();
-    printf("\n");
-
-    getchar();
-
+    int ret = cmdLoopAdapter();
     releaseDisk();
-    return 0;
+    return ret;
 }
