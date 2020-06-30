@@ -24,6 +24,8 @@ Fcb* path[16];
 // 当前打开的目录深度
 short current;
 
+const int FCB_LIST_LEN = sizeof(Block) / sizeof(Fcb);
+
 Block* getDisk()
 {
     // 获取共享内存区
@@ -102,7 +104,7 @@ void initDirFcb(Fcb* fcb, short block_number, short parent_number)
     p->size = -1;
 
     // 初始化目录表
-    for (int i = 2; i < (sizeof(Block) / sizeof(Fcb)); i++) {
+    for (int i = 2; i < FCB_LIST_LEN; i++) {
         p++;
         strcpy(p->name, "");
         p->is_existed = 0;
@@ -155,11 +157,16 @@ int getFreeBlock(int size)
     return -1;
 }
 
+int getBlockNum(int size)
+{
+    return (size - 1) / sizeof(Block) + 1;
+}
+
 Fcb* searchFcb(char* name)
 {
     char is_existed = 0;
     Fcb* fcb = path[current];
-    for (int i = 0; i < (sizeof(Block) / sizeof(Fcb)); i++) {
+    for (int i = 0; i < FCB_LIST_LEN; i++) {
         if (fcb->is_existed == 1 && strcmp(fcb->name, name) == 0) {
             return fcb;
         }
@@ -170,7 +177,7 @@ Fcb* searchFcb(char* name)
 
 Fcb* getFreeFcb(Fcb* fcb)
 {
-    for (int i = 0; i < (sizeof(Block) / sizeof(Fcb)); i++) {
+    for (int i = 0; i < FCB_LIST_LEN; i++) {
         if (fcb->is_existed == 0) {
             return fcb;
         }
@@ -187,7 +194,7 @@ Fcb* newFcb(Fcb* fcb, char* name, char is_dir, int size)
     // 时间
     setCurrentTime(&fcb->datetime);
     // 文件
-    int block_num = getFreeBlock(((size - 1) / sizeof(Block)) + 1);
+    int block_num = getFreeBlock(getBlockNum(size));
     if (block_num == -1) {
         printf("[newFcb] Disk has Fulled\n");
         exit(EXIT_FAILURE);
@@ -218,8 +225,7 @@ int doRmdir(char* name)
     Fcb* fcb = searchFcb(name);
     if (fcb && fcb->is_directory == 1) {
         // 释放fat标记
-        int i;
-        for (i = 0; i < ((fcb->size - 1) / sizeof(Block) + 1); i++) {
+        for (int i = 0; i < getBlockNum(fcb->size); i++) {
             fat[fcb->block_number + i] = FREE;
         }
         // 删除索引记录
@@ -257,7 +263,7 @@ int doOpen(char* name)
         }
         // 存在该文件，即读取文件内容
         char* p = (char*)(disk + fcb->block_number);
-        for (int i = 0; i < fcb->size / sizeof(char); i++) {
+        for (int i = 0; i < fcb->size; i++) {
             printf("%c", *p);
             p++;
         }
@@ -282,10 +288,31 @@ int doWrite(char* name)
         // 存在该文件，即尝试写入文件内容
         char* p = (char*)(disk + fcb->block_number);
         scanf("%[^\n]", p);
-        fcb->size = strlen(p) * sizeof(char);
+        fcb->size = strlen(p);
     } else {
-        // 不存在该文件，则创建文件
+        // 不存在该文件
         printf("[doWrite] Not found %s\n", name);
+    }
+    return 0;
+}
+
+int doRm(char* name)
+{
+    Fcb* fcb = searchFcb(name);
+    if (fcb) {
+        if (fcb->is_directory != 0) {
+            printf("[doRm] %s is not file\n", name);
+            return -1;
+        }
+        // 释放fat标记
+        for (int i = 0; i < getBlockNum(fcb->size); i++) {
+            fat[fcb->block_number + i] = FREE;
+        }
+        // 删除索引记录
+        fcb->is_existed = 0;
+    } else {
+        printf("[doRm] Not found %s\n", name);
+        return -1;
     }
     return 0;
 }
@@ -324,11 +351,15 @@ int main()
     printf("\n");
     doLs();
     printf("\n");
-    doWrite("345");
+    doRename("345", "456");
     printf("\n");
     doLs();
     printf("\n");
-    doOpen("345");
+    doWrite("456");
+    printf("\n");
+    doOpen("456");
+    printf("\n");
+    doRm("456");
     printf("\n");
     doLs();
     printf("\n");
