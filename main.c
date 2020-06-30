@@ -15,8 +15,8 @@ int shmid; // 共享内存id
 
 char* fat; // fat表
 
-Fcb* path[16]; // 当前打开的目录路径fcb数组
-char* path_name[16]; // 当前打开的目录路径名数组
+Fcb* open_path[16]; // 当前打开的目录路径fcb数组
+char* open_name[16]; // 当前打开的目录路径名数组
 short current; // 当前打开的目录深度
 
 const int FCB_LIST_LEN = sizeof(Block) / sizeof(Fcb); // 一个Block可容纳的Fcb个数
@@ -113,8 +113,8 @@ void initDisk()
     Fcb* root = (Fcb*)(disk + DATA_BLOCK);
     initDirFcb(root, DATA_BLOCK, DATA_BLOCK);
     current = 0;
-    path[current] = root;
-    path_name[current] = "Root";
+    open_path[current] = root;
+    open_name[current] = "Root";
 }
 
 void releaseDisk()
@@ -160,7 +160,7 @@ int getBlockNum(int size)
 Fcb* searchFcb(char* name)
 {
     char is_existed = 0;
-    Fcb* fcb = path[current];
+    Fcb* fcb = open_path[current];
     for (int i = 0; i < FCB_LIST_LEN; i++) {
         if (fcb->is_existed == 1 && strcmp(fcb->name, name) == 0) {
             return fcb;
@@ -200,6 +200,18 @@ Fcb* newFcb(Fcb* fcb, char* name, char is_dir, int size)
     return fcb;
 }
 
+// 字符分割函数
+char** split(char** arr, char* str, const char* delims)
+{
+    char* s = NULL;
+    s = strtok(str, delims);
+    while (s != NULL) {
+        *arr++ = s;
+        s = strtok(NULL, delims);
+    }
+    return arr;
+}
+
 int doMkdir(char* name)
 {
     // 查找是否已存在
@@ -208,32 +220,43 @@ int doMkdir(char* name)
         printf("[doMkdir] %s is existed\n", name);
         return -1;
     }
+    
     // 在当前fcb表中插入新目录的fcb
-    Fcb* fcb = getFreeFcb(path[current]);
+    Fcb* fcb = getFreeFcb(open_path[current]);
     newFcb(fcb, name, 1, sizeof(Block));
     fcb->size = sizeof(Fcb) * 2;
-    path[current]->size += sizeof(Fcb);
+    open_path[current]->size += sizeof(Fcb);
+
     // 初始化新目录的fcb
     Fcb* new_dir = (Fcb*)(disk + fcb->block_number);
-    initDirFcb(new_dir, fcb->block_number, path[current]->block_number);
+    initDirFcb(new_dir, fcb->block_number, open_path[current]->block_number);
     return 0;
 }
 
 // TODO 多层级目录，需要递归删除
 int doRmdir(char* name)
 {
-    if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) {
+    // char* path_split[16];
+    // split(path_split, path, "/");
+    if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0)
+    {
         printf("[doRmdir] You can't delete %s\n", name);
         return -1;
     }
     Fcb* fcb = searchFcb(name);
     if (fcb && fcb->is_directory == 1) {
+        Fcb* p = (Fcb*)(disk + fcb->block_number) + 2;
+        for (int i = 0; i < FCB_LIST_LEN; i++) {
+
+        }
         // 释放fat标记
         for (int i = 0; i < getBlockNum(fcb->size); i++) {
             fat[fcb->block_number + i] = FREE;
         }
         // 删除索引记录
         fcb->is_existed = 0;
+        // 减小记录的空间大小
+        open_path[current] -= sizeof(fcb);
     } else {
         printf("[doRmdir] Not found %s\n", name);
         return -1;
@@ -274,10 +297,10 @@ int doOpen(char* name)
         printf("\n");
     } else {
         // 不存在该文件，则创建文件
-        Fcb* fcb = getFreeFcb(path[current]);
+        Fcb* fcb = getFreeFcb(open_path[current]);
         newFcb(fcb, name, 0, sizeof(Block));
         fcb->size = 0;
-        path[current]->size += sizeof(Fcb);
+        open_path[current]->size += sizeof(Fcb);
     }
     return 0;
 }
@@ -321,6 +344,8 @@ int doRm(char* name)
         }
         // 删除索引记录
         fcb->is_existed = 0;
+        // 减小记录的空间大小
+        open_path[current] -= sizeof(fcb);
     } else {
         printf("[doRm] Not found %s\n", name);
         return -1;
@@ -330,8 +355,8 @@ int doRm(char* name)
 
 void doLs()
 {
-    Fcb* fcb = path[current];
-    int num = path[current]->size / sizeof(Fcb);
+    Fcb* fcb = open_path[current];
+    int num = open_path[current]->size / sizeof(Fcb);
     for (int i = 0; i < (sizeof(Block) / sizeof(Fcb)); i++) {
         if (fcb->is_existed) {
             printf("%s\t", fcb->name);
@@ -343,8 +368,8 @@ void doLs()
 
 void doLls()
 {
-    Fcb* fcb = path[current];
-    int num = path[current]->size / sizeof(Fcb);
+    Fcb* fcb = open_path[current];
+    int num = open_path[current]->size / sizeof(Fcb);
     for (int i = 0; i < 2; i++) {
         if (fcb->is_existed) {
             printf("%s\n", fcb->name);
@@ -361,7 +386,6 @@ void doLls()
         }
         fcb++;
     }
-    printf("\n");
 }
 
 int doCd(char* name)
@@ -385,8 +409,8 @@ int doCd(char* name)
             return -1;
         }
         current++;
-        path_name[current] = fcb->name;
-        path[current] = (Fcb*)(disk + fcb->block_number);
+        open_name[current] = fcb->name;
+        open_path[current] = (Fcb*)(disk + fcb->block_number);
         return 0;
     } else {
         printf("[doCd] %s is not existed\n", name);
@@ -398,7 +422,7 @@ void printPathInfo()
 {
     printf("YangRui@FileSystem:");
     for (int i = 0; i <= current; i++) {
-        printf("/%s", path_name[i]);
+        printf("/%s", open_name[i]);
     }
     printf("> ");
 }
