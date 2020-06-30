@@ -341,6 +341,29 @@ void doLs()
     printf("\n");
 }
 
+void doLls()
+{
+    Fcb* fcb = path[current];
+    int num = path[current]->size / sizeof(Fcb);
+    for (int i = 0; i < 2; i++) {
+        if (fcb->is_existed) {
+            printf("%s\n", fcb->name);
+        }
+        fcb++;
+    }
+    for (int i = 2; i < (sizeof(Block) / sizeof(Fcb)); i++) {
+        if (fcb->is_existed) {
+            printf("%hu-%hu-%hu %hu:%hu:%hu\t", fcb->datetime.year, fcb->datetime.month, fcb->datetime.day, fcb->datetime.hour, fcb->datetime.minute, fcb->datetime.second);
+            printf("Block %hd\t", fcb->block_number);
+            printf("%hu B\t", fcb->size);
+            printf("%s\t", fcb->is_directory ? "Dir" : "File");
+            printf("%s\n", fcb->name);
+        }
+        fcb++;
+    }
+    printf("\n");
+}
+
 int doCd(char* name)
 {
     if (strcmp(name, ".") == 0) {
@@ -412,6 +435,8 @@ int cmdLoopAdapter()
             doRm(getArg(buffer));
         } else if (strcmp(buffer, "ls") == 0) {
             doLs();
+        } else if (strcmp(buffer, "lls") == 0) {
+            doLls();
         } else if (strcmp(buffer, "cd") == 0) {
             doCd(getArg(buffer));
         } else if (strcmp(buffer, "exit") == 0) {
