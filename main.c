@@ -252,12 +252,12 @@ int doOpen(char* name)
     Fcb* fcb = searchFcb(name);
     if (fcb) {
         if (fcb->is_directory != 0) {
-            printf("[doOpen] %s is not file\n", name);
+            printf("[doOpen] %s is not readable file\n", name);
             return -1;
         }
         // 存在该文件，即读取文件内容
         char* p = (char*)(disk + fcb->block_number);
-        for (int i = 0; i < fcb->size; i++) {
+        for (int i = 0; i < fcb->size / sizeof(char); i++) {
             printf("%c", *p);
             p++;
         }
@@ -267,6 +267,25 @@ int doOpen(char* name)
         newFcb(fcb, name, 0, sizeof(Block));
         fcb->size = 0;
         path[current]->size += sizeof(Fcb);
+    }
+    return 0;
+}
+
+int doWrite(char* name)
+{
+    Fcb* fcb = searchFcb(name);
+    if (fcb) {
+        if (fcb->is_directory != 0) {
+            printf("[doWrite] %s is not writable file\n", name);
+            return -1;
+        }
+        // 存在该文件，即尝试写入文件内容
+        char* p = (char*)(disk + fcb->block_number);
+        scanf("%[^\n]", p);
+        fcb->size = strlen(p) * sizeof(char);
+    } else {
+        // 不存在该文件，则创建文件
+        printf("[doWrite] Not found %s\n", name);
     }
     return 0;
 }
@@ -281,7 +300,6 @@ void doLs()
         }
         fcb++;
     }
-    printf("\n");
 }
 
 void doCd(char* path)
@@ -295,13 +313,25 @@ int main()
     initDisk();
 
     doMkdir("123");
+    printf("\n");
     doLs();
+    printf("\n");
     doRmdir("123");
+    printf("\n");
     doLs();
+    printf("\n");
     doOpen("345");
+    printf("\n");
     doLs();
+    printf("\n");
+    doWrite("345");
+    printf("\n");
+    doLs();
+    printf("\n");
     doOpen("345");
+    printf("\n");
     doLs();
+    printf("\n");
 
     getchar();
 
