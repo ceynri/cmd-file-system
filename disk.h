@@ -6,7 +6,7 @@
 #define FREE 0
 
 #define FAT_BLOCK 1
-#define DATA_BLOCK 14
+#define DATA_BLOCK 8
 
 const unsigned int BLOCK_NUM = 25600;
 const unsigned int DATA_NUM = 25600 - DATA_BLOCK;
@@ -33,6 +33,5 @@ typedef struct
 
 typedef struct
 {
-    // 13
-    short id;
+    char id;
 } Fat;
