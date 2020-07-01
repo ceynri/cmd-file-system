@@ -3,6 +3,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/shm.h>
+#include <fcntl.h>
+#include <semaphore.h>
+#include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -21,6 +24,8 @@ short current; // 当前打开的目录深度
 
 const int FCB_LIST_LEN = sizeof(Block) / sizeof(Fcb); // 一个Block可容纳的Fcb个数
 
+sem_t *sem_read, *sem_write;
+
 // 函数声明
 
 Block* getDisk();
@@ -38,10 +43,13 @@ int getBlockNum(int size);
 Fcb* searchFcb(char* path, Fcb* root);
 Fcb* getFreeFcb(Fcb* fcb);
 Fcb* initFcb(Fcb* fcb, char* name, char is_dir, int size);
+Fcb* getParent(char* path);
 char* getPathLastName(char* path);
+char* getAbsPath(char* path, char* abs_path);
 
 // Do指令方法
 int doMkdir(char* path);
+int doRmdir(char* path, Fcb* root);
 int doRename(char* src, char* dst);
 int doOpen(char* path);
 int doWrite(char* path);
@@ -127,6 +135,23 @@ Block* getDisk()
     return disk;
 }
 
+// 释放磁盘空间
+void releaseDisk()
+{
+    // 停止引用共享内存
+    if (shmdt(disk_space) == -1) {
+        // 停止失败
+        fprintf(stderr, "[releaseDisk] Shmdt failed\n");
+        exit(EXIT_FAILURE);
+    }
+    // 删除共享内存
+    if (shmctl(shmid, IPC_RMID, 0) == -1) {
+        // 删除失败
+        fprintf(stderr, "[releaseDisk] Shmctl failed\n");
+        exit(EXIT_FAILURE);
+    }
+}
+
 // 初始化磁盘
 void initDisk()
 {
@@ -198,23 +223,6 @@ void initDir(Fcb* fcb, short block_number, short parent_number)
     }
 }
 
-// 释放磁盘空间
-void releaseDisk()
-{
-    // 停止引用共享内存
-    if (shmdt(disk_space) == -1) {
-        // 停止失败
-        fprintf(stderr, "[releaseDisk] Shmdt failed\n");
-        exit(EXIT_FAILURE);
-    }
-    // 删除共享内存
-    if (shmctl(shmid, IPC_RMID, 0) == -1) {
-        // 删除失败
-        fprintf(stderr, "[releaseDisk] Shmctl failed\n");
-        exit(EXIT_FAILURE);
-    }
-}
-
 // get/set函数
 
 // 设置传入参数为当前时间
@@ -283,6 +291,41 @@ Fcb* searchFcb(char* path, Fcb* root)
     return NULL;
 }
 
+// 获取简短的绝对路径字符串
+char* getAbsPath(char* path, char* abs_path)
+{
+    char abs_path_arr[16][16];
+    int len;
+    for (len = 0; len <= current; len++) {
+        strcpy(abs_path_arr[len], open_name[len]);
+    }
+
+    char _path[64];
+    strcpy(_path, path);
+    char* name = strtok(_path, "/");
+    char* next = name;
+    while (next != NULL) {
+        name = next;
+        next = strtok(NULL, "/");
+        if (strcmp(name, ".") == 0) {
+            continue;
+        } else if (strcmp(name, "..") == 0) {
+            len--;
+        } else {
+            strcpy(abs_path_arr[len++], name);
+        }
+    }
+    char* p = abs_path;
+    for (int i = 0; i < len; i++) {
+        for (int j = 0; j < strlen(abs_path_arr[i]); j++) {
+            *p++ = abs_path_arr[i][j];
+        }
+        *p++ = '/';
+    }
+    *(p - 1) = 0;
+    return abs_path;
+}
+
 // 获得当前Fcb表的第一个空闲位置
 Fcb* getFreeFcb(Fcb* fcb)
 {
@@ -315,6 +358,33 @@ Fcb* initFcb(Fcb* fcb, char* name, char is_dir, int size)
     return fcb;
 }
 
+// 获得父亲目录
+Fcb* getParent(char* path)
+{
+    // 找到创建目录的上一级
+    char parent_path[64];
+    strcpy(parent_path, path);
+    for (int i = strlen(parent_path); i >= 0; i--) {
+        if (parent_path[i] == '/') {
+            parent_path[i] = 0;
+            break;
+        }
+        parent_path[i] = 0;
+    }
+    // 找父亲的数据块
+    Fcb* parent;
+    if (strlen(parent_path) != 0) {
+        Fcb* parent_pcb = searchFcb(parent_path, open_path[current]);
+        if (parent_pcb == NULL) {
+            return NULL;
+        }
+        parent = (Fcb*)getBlock(parent_pcb->block_number);
+    } else {
+        parent = open_path[current];
+    }
+    return parent;
+}
+
 // 获得路径地址最后一项的名字
 char* getPathLastName(char* path)
 {
@@ -340,26 +410,11 @@ int doMkdir(char* path)
         printf("[doMkdir] %s is existed\n", path);
         return -1;
     }
-    // 找到创建目录的上一级
-    char parent_path[64];
-    strcpy(parent_path, path);
-    for (int i = strlen(parent_path); i >= 0; i--) {
-        if (parent_path[i] == '/') {
-            parent_path[i] = 0;
-            break;
-        }
-        parent_path[i] = 0;
-    }
-    Fcb* parent;
-    if (strlen(parent_path) != 0) {
-        Fcb* parent_pcb = searchFcb(parent_path, open_path[current]);
-        if (parent_pcb == NULL) {
-            printf("[doMkdir] Not found %s\n", parent_path);
-            return -1;
-        }
-        parent = (Fcb*)getBlock(parent_pcb->block_number);
-    } else {
-        parent = open_path[current];
+    // 找父亲的数据块
+    Fcb* parent = getParent(path);
+    if (parent == NULL) {
+        printf("[doMkdir] Not found %s\n", path);
+        return -1;
     }
     // 在当前fcb表中插入新目录的fcb
     Fcb* fcb = getFreeFcb(parent);
@@ -402,6 +457,7 @@ int doRmdir(char* path, Fcb* root)
         // 删除索引记录
         fcb->is_existed = 0;
         // 减小记录的空间大小
+        // TODO 此处有小bug，root不一定就是父节点，这里和上面的递归删除相冲突，比较合适的应该是改递归删除的逻辑
         root->size -= sizeof(Fcb);
     } else {
         printf("[doRmdir] Not found %s\n", path);
@@ -436,6 +492,8 @@ int doOpen(char* path)
             printf("[doOpen] %s is not readable file\n", fcb->name);
             return -1;
         }
+        char abs_path[256];
+        sem_read = sem_open(getAbsPath(path, abs_path), O_CREAT, 0666, 1);
         // 存在该文件，即读取文件内容
         char* p = (char*)getBlock(fcb->block_number);
         for (int i = 0; i < fcb->size; i++) {
@@ -445,12 +503,17 @@ int doOpen(char* path)
         printf("\n");
     } else {
         // 不存在该文件，则创建文件
-        Fcb* fcb = getFreeFcb(open_path[current]);
+        Fcb* parent = getParent(path);
+        if (parent == NULL) {
+            printf("[doOpen] Not found %s\n", path);
+            return -1;
+        }
+        Fcb* fcb = getFreeFcb(parent);
         // 获得路径地址最后一项的名字
         char* name = getPathLastName(path);
         initFcb(fcb, name, 0, sizeof(Block));
         fcb->size = 0;
-        open_path[current]->size += sizeof(Fcb);
+        parent->size += sizeof(Fcb);
     }
     return 0;
 }
@@ -497,7 +560,7 @@ int doRm(char* path, Fcb* root)
         // 删除索引记录
         fcb->is_existed = 0;
         // 减小记录的空间大小
-        root->size -= sizeof(Fcb);
+        getParent(path)->size -= sizeof(Fcb);
     } else {
         printf("[doRm] Not found %s\n", path);
         return -1;
@@ -510,7 +573,7 @@ void doLs()
 {
     Fcb* fcb = open_path[current];
     int num = open_path[current]->size / sizeof(Fcb);
-    for (int i = 0; i < (sizeof(Block) / sizeof(Fcb)); i++) {
+    for (int i = 0; i < FCB_LIST_LEN; i++) {
         if (fcb->is_existed) {
             printf("%s\t", fcb->name);
         }
@@ -530,10 +593,10 @@ void doLls()
         }
         fcb++;
     }
-    for (int i = 2; i < (sizeof(Block) / sizeof(Fcb)); i++) {
+    for (int i = 2; i < FCB_LIST_LEN; i++) {
         if (fcb->is_existed) {
             printf("%hu-%hu-%hu %hu:%hu:%hu\t", fcb->datetime.year, fcb->datetime.month, fcb->datetime.day, fcb->datetime.hour, fcb->datetime.minute, fcb->datetime.second);
-            printf("Block %hd\t", fcb->block_number);
+            printf("Block %hd  \t", fcb->block_number);
             printf("%hu B\t", fcb->size);
             printf("%s\t", fcb->is_directory ? "Dir" : "File");
             printf("%s\n", fcb->name);
