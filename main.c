@@ -12,6 +12,8 @@
 #include "disk.h"
 #include "file.h"
 
+#define READ_MAX 256
+
 Block* disk; // 硬盘指针
 void* disk_space = (void*)0; // 硬盘空间
 int shmid; // 共享内存id
@@ -320,7 +322,7 @@ char* getAbsPath(char* path, char* abs_path)
         for (int j = 0; j < strlen(abs_path_arr[i]); j++) {
             *p++ = abs_path_arr[i][j];
         }
-        *p++ = '/';
+        *p++ = '-';
     }
     *(p - 1) = 0;
     return abs_path;
@@ -492,8 +494,14 @@ int doOpen(char* path)
             printf("[doOpen] %s is not readable file\n", fcb->name);
             return -1;
         }
-        char abs_path[256];
-        sem_read = sem_open(getAbsPath(path, abs_path), O_CREAT, 0666, 1);
+        // 获取读信号量
+        char mutex_name[256];
+        getAbsPath(path, mutex_name);
+        char* suffix = mutex_name + strlen(mutex_name);
+        strcpy(suffix, "-read");
+        sem_read = sem_open(mutex_name, O_CREAT, 0666, READ_MAX);
+        sem_wait(sem_read);
+
         // 存在该文件，即读取文件内容
         char* p = (char*)getBlock(fcb->block_number);
         for (int i = 0; i < fcb->size; i++) {
@@ -501,6 +509,12 @@ int doOpen(char* path)
             p++;
         }
         printf("\n");
+        getchar();
+        getchar();
+
+        // 释放读信号量
+        sem_post(sem_read);
+        sem_unlink(mutex_name);
     } else {
         // 不存在该文件，则创建文件
         Fcb* parent = getParent(path);
