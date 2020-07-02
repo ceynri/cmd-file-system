@@ -59,6 +59,7 @@ int doRm(char* path, Fcb* root);
 void doLs();
 void doLls();
 int doCd(char* path);
+int doHelp();
 
 void printPathInfo();
 char* getArg(char* str);
@@ -105,6 +106,8 @@ int cmdLoopAdapter()
             doCd(getArg(buffer));
         } else if (strcmp(buffer, "exit") == 0) {
             return 0;
+        } else if (strcmp(buffer, "help") == 0) {
+            doHelp();
         } else if (strlen(buffer) != 0) {
             printf("[cmdLoopAdapter] Unsupported command\n");
         }
@@ -494,10 +497,22 @@ int doOpen(char* path)
             printf("[doOpen] %s is not readable file\n", fcb->name);
             return -1;
         }
-        // 获取读信号量
+        // 获取信号量
         char mutex_name[256];
         getAbsPath(path, mutex_name);
         char* suffix = mutex_name + strlen(mutex_name);
+        
+        // 监测是否正在写
+        strcpy(suffix, "-write");
+        sem_write = sem_open(mutex_name, O_CREAT, 0666, 1);
+        int sval;
+        sem_getvalue(sem_write, &sval);
+        if (sval < 1) {
+            printf("[doOpen] %s is busy\n", fcb->name);
+            return -1;
+        }
+        
+        // 减少读信号量
         strcpy(suffix, "-read");
         sem_read = sem_open(mutex_name, O_CREAT, 0666, READ_MAX);
         sem_wait(sem_read);
@@ -510,11 +525,11 @@ int doOpen(char* path)
         }
         printf("\n");
         getchar();
+        printf("[doOpen] Input any key to return...");
         getchar();
 
-        // 释放读信号量
+        // 增加读信号量
         sem_post(sem_read);
-        sem_unlink(mutex_name);
     } else {
         // 不存在该文件，则创建文件
         Fcb* parent = getParent(path);
@@ -541,16 +556,46 @@ int doWrite(char* path)
             printf("[doWrite] %s is not writable file\n", fcb->name);
             return -1;
         }
+        
+        // 获取信号量
+        char mutex_name[256];
+        getAbsPath(path, mutex_name);
+        char* suffix = mutex_name + strlen(mutex_name);
+        
+        // 监测是否正在读
+        strcpy(suffix, "-read");
+        sem_read = sem_open(mutex_name, O_CREAT, 0666, READ_MAX);
+        int sval;
+        sem_getvalue(sem_read, &sval);
+        if (sval < READ_MAX) {
+            printf("[doWrite] %s is busy\n", fcb->name);
+            return -1;
+        }
+
+        // 减少写信号量
+        strcpy(suffix, "-write");
+        sem_write = sem_open(mutex_name, O_CREAT, 0666, 1);
+        
+    sem_getvalue(sem_write, &sval);
+    if (sval < 1) {
+        printf("[doWrite] Waiting for idle...\n");
+    }
+    sem_wait(sem_write);
+    printf("[doWrite] You can write now\n");
+
         // 存在该文件，即尝试写入文件内容
         char* head = (char*)(disk + fcb->block_number);
         char* p = head;
-        // 去掉蜜汁回车
+        // 去掉缓冲区里的回车
         getchar();
         while ((*p = getchar()) != 27 && *p != EOF) {
             p++;
         }
         *p = 0;
         fcb->size = strlen(head);
+        
+        // 释放信号量
+        sem_post(sem_write);
     } else {
         // 不存在该文件
         printf("[doWrite] Not found %s\n", path);
@@ -656,6 +701,22 @@ int doCd(char* path)
         }
     }
     return 0;
+}
+
+int doHelp()
+{
+    printf("\n");
+    printf("help\t输出帮助\n");
+    printf("ls\t输出目录信息\n");
+    printf("lls\t输出目录详细信息\n");
+    printf("cd\t跳转目录，支持多级跳转\n");
+    printf("mkdir\t新建目录\n");
+    printf("rmdir\t删除目录，自动递归删除所有子文件\n");
+    printf("open\t打开文件，如果文件不存在则自动创建\n");
+    printf("rm\t删除文件\n");
+    printf("rename\t修改名称\n");
+    printf("exit\t退出文件系统\n");
+    printf("\n");
 }
 
 // 输出当前路径提示符
